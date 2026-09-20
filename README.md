@@ -1,3 +1,7 @@
+# !! ARCHIVED  !!  
+# This repository merged into PSPSDK
+
+<br><br><br>
 # PSP Dynamic Libraries
 
 Dynamic PRX libraries for PSP.
