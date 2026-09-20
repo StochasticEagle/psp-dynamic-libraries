@@ -1,24 +1,41 @@
 name: psp-dynamic-libraries
- 
+
 on:
   push:
     branches:
       - main
+
 permissions:
   contents: write
+
+env:
+  PSPSDK_CFW_REV: 9702264002efcbaef95e2e72a7e5ea3699165a85
+
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
       image: pspdev/pspdev
-    steps:
-      - name: Dependencies
-        run: |
-          apk add clang automake autoconf zlib-dev python3 py3-pycryptodomex py3-ecdsa zip sudo
 
-      - name: Clone integrated PSPSDK fork
+    steps:
+      - name: Host dependencies
         run: |
-          git clone --depth 1 --branch dev/fork --recurse-submodules --shallow-submodules https://github.com/StochasticEagle/pspsdk.git
+          apk add --no-cache             autoconf             automake             clang             cmake             git             ninja             py3-ecdsa             py3-pycryptodomex             python3             zip             zlib-dev
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: PSP library dependencies
+        run: |
+          psp-pacman -Syy --noconfirm
+          psp-pacman -S --needed --noconfirm             bzip2             liblzma             libpng             libpspav             libpspftp             unarr             zlib
+
+      - name: Checkout pinned integrated PSPSDK
+        run: |
+          git clone --branch dev/fork https://github.com/StochasticEagle/pspsdk.git pspsdk
+          git -C pspsdk checkout --detach "$PSPSDK_CFW_REV"
+          git -C pspsdk submodule update --init --recursive --depth 1
+          test "$(git -C pspsdk rev-parse HEAD)" = "$PSPSDK_CFW_REV"
 
       - name: Build and install PSPSDK
         working-directory: pspsdk
@@ -29,23 +46,28 @@ jobs:
           make install
           ./build-cfw-and-install.sh
 
-      - name: ya2d via psp-pacman
+      - name: Configure
         run: |
-          psp-pacman -Syyu --noconfirm
-          psp-pacman -S ya2d --noconfirm
-
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
+          cmake             -S .             -B build             -G Ninja             -DCMAKE_TOOLCHAIN_FILE="$PSPDEV/psp/share/pspdev.cmake"             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: make clean && make
+        run: |
+          cmake --build build --parallel "$(getconf _NPROCESSORS_ONLN)"
+
+      - name: Verify release contents
+        run: |
+          for prx in             idsregeneration.prx             iop.prx             ipl_update.prx             kbooti_update.prx             libpng.prx             pspav.prx             pspftp.prx             kpspident.prx             unarchive.prx             usbdevice.prx             intraFont-vlf.prx             lflash_fdisk.prx             libpsardumper.prx             pspdecrypt.prx             vlf.prx
+          do
+            test -s "build/dist/LIBS/$prx"
+          done
+
+          count="$(find build/dist/LIBS -maxdepth 1 -type f -name '*.prx' | wc -l | tr -d ' ')"
+          test "$count" -eq 15
 
       - name: Compress
         run: |
-          cd dist/LIBS
-          zip -r ../../LIBS.zip .
+          cd build/dist/LIBS
+          zip -9 -r ../../../LIBS.zip .
 
       - name: Upload
         uses: actions/upload-artifact@v7
@@ -56,6 +78,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
